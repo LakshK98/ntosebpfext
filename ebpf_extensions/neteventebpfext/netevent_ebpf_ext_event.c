@@ -65,7 +65,21 @@ _netevent_ebpf_extension_detach_provider(_In_ HANDLE nmr_binding_handle);
 
 // Dispatch table for the client module's helper functions
 static const void* _ebpf_netevent_ext_helper_functions[] = {(void*)&_ebpf_netevent_push_event};
-const ebpf_helper_function_addresses_t _netevent_client_dispatch = {
+
+typedef struct my_extension_header
+{
+    uint16_t version; ///< Version of the extension data structure.
+    size_t size;      ///< Size of the extension data structure not including any padding.
+} my_extension_header_t;
+
+typedef struct my_function_addresses
+{
+    my_extension_header_t header;
+    uint32_t helper_function_count;
+    uint64_t* helper_function_address;
+} my_function_addresses_t;
+
+const my_function_addresses_t _netevent_client_dispatch = {
     .header =
         {.version = EBPF_HELPER_FUNCTION_ADDRESSES_CURRENT_VERSION,
          .size = EBPF_HELPER_FUNCTION_ADDRESSES_CURRENT_VERSION_SIZE},
