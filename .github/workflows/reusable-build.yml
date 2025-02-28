@@ -114,7 +114,7 @@ jobs:
     - name: Check for Clang version (MSVC)
       if: steps.skip_check.outputs.should_skip != 'true'
       run:
-        '$(VsInstallRoot)\VC\Tools\Llvm\bin\clang.exe --version'
+        'c:\Program Files\VC\Tools\Llvm\bin\clang.exe --version'
 
     - name: Check clang version (LLVM)
       if: steps.skip_check.outputs.should_skip != 'true'
