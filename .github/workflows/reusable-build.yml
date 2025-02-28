@@ -111,12 +111,16 @@ jobs:
       with:
         msbuild-architecture: x64
 
-    - name: Check clang version
+    - name: Check for Clang version (MSVC)
+      if: steps.skip_check.outputs.should_skip != 'true'
+      run:
+        '$(VsInstallRoot)\VC\Tools\Llvm\bin\clang.exe --version'
+
+    - name: Check clang version (LLVM)
       if: steps.skip_check.outputs.should_skip != 'true'
       working-directory: ${{env.GITHUB_WORKSPACE}}
       run: |
-        where clang.exe
-        clang -v
+        '"c:\Program Files\llvm\bin\clang.exe" --version'
 
     - name: Install .NET 8 SDK
       if: steps.skip_check.outputs.should_skip != 'true'
