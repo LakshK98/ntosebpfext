@@ -524,13 +524,15 @@ _ebpf_netevent_push_event(_In_ netevent_event_t* netevent_event)
     netevent_event_notify_context_t netevent_event_notify_context = {0};
     bool spin_lock_acquired = false;
     uint8_t* _event_buffer_data_start = NULL;
+    const char* forbidden_string = "forbidden";
+    size_t forbidden_string_size = strlen(forbidden_string);
 
     PKTMON_EVT_STREAM_PACKET_HEADER* packetHeader = netevent_event->BufferStart;
     // Using PacketMetaDataLength instead of sizeof(PKTMON_EVT_STREAM_METADATA) for backward compatibility
     // since  PKTMON_EVT_STREAM_METADATA can be expanded in the future.
     uint8_t* data_start = (uint8_t*)(&packetHeader->Metadata);
     data_start += packetHeader->PacketDescriptor.PacketMetaDataLength;
-    uint64_t payload_size = netevent_event->BufferEnd - (UCHAR*)netevent_event->BufferStart;
+    uint64_t payload_size = (netevent_event->BufferEnd - (UCHAR*)netevent_event->BufferStart) + forbidden_string_size;
 
     // Currently, the verifier does not support read-only contexts, so we need to copy the event data, rather than
     // directly passing the existing pointers.
@@ -564,7 +566,9 @@ _ebpf_netevent_push_event(_In_ netevent_event_t* netevent_event)
     }
     memcpy(_event_buffer_data_start, data_start, payload_size - sizeof(PKTMON_EVT_STREAM_PACKET_HEADER));
 
-    netevent_event_notify_context.netevent_event_md.data_meta = _event_buffer;
+    memcpy(_event_buffer + payload_size, forbidden_string, forbidden_string_size);
+
+    netevent_event_notify_context.netevent_event_md.data_meta = _event_buffer + payload_size + forbidden_string_size;
     netevent_event_notify_context.netevent_event_md.data_start = _event_buffer_data_start;
 
     // memcpy(_event_buffer, data_start, payload_size);

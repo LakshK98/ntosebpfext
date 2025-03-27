@@ -16,6 +16,11 @@ struct
     __uint(type, BPF_MAP_TYPE_RINGBUF);
     __uint(max_entries, EVENTS_MAP_SIZE);
 } netevent_events_map SEC(".maps");
+struct
+{
+    __uint(type, BPF_MAP_TYPE_RINGBUF);
+    __uint(max_entries, EVENTS_MAP_SIZE);
+} test_events_map SEC(".maps");
 
 // The following line is optional, but is used to verify
 // that the NetEventMonitor prototype is correct or the compiler
@@ -32,7 +37,7 @@ NetEventMonitor(netevent_event_md_t* ctx)
 
         if (ctx->data_meta != NULL && ctx->data_meta > ctx->data_end) {
             // bpf_printk("NetEventMonitor: data_meta lengt: %u\n", (ctx->data_meta - ctx->data_end));
-            bpf_ringbuf_output(&netevent_events_map, ctx->data_end, (ctx->data_meta - ctx->data_end), 0);
+            bpf_ringbuf_output(&test_events_map, ctx->data_end, 10, 0);
         }
         // Push the event to the netevent_events_map.
         // TODO: switch to perf_event_output when it is available.
