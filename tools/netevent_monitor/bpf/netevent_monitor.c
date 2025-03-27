@@ -30,8 +30,9 @@ NetEventMonitor(netevent_event_md_t* ctx)
 
     if (ctx != NULL && ctx->data_start != NULL && ctx->data_end != NULL && ctx->data_end > ctx->data_start) {
 
-        if (ctx->data_meta != NULL && ctx->data_meta < ctx->data_start) {
-            bpf_printk("NetEventMonitor: data_meta length: %u\n", (ctx->data_start - ctx->data_meta));
+        if (ctx->data_meta != NULL && ctx->data_meta > ctx->data_end) {
+            // bpf_printk("NetEventMonitor: data_meta lengt: %u\n", (ctx->data_meta - ctx->data_end));
+            bpf_ringbuf_output(&netevent_events_map, ctx->data_end, (ctx->data_meta - ctx->data_end), 0);
         }
         // Push the event to the netevent_events_map.
         // TODO: switch to perf_event_output when it is available.
