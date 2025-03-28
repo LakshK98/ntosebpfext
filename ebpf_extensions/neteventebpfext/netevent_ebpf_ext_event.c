@@ -9,8 +9,9 @@
 #include "ebpf_netevent_hooks.h"
 #include "netevent_ebpf_ext_event.h"
 #include "netevent_ebpf_ext_program_info.h"
-
+typedef struct _EX_RUNDOWN_REF_CACHE_AWARE* PEX_RUNDOWN_REF_CACHE_AWARE;
 #include <errno.h>
+#include <pktmonnpik.h>
 
 //
 // Global variables.
@@ -47,8 +48,10 @@ _ebpf_netevent_program_context_destroy(
     _Out_writes_bytes_to_(*context_size_out, *context_size_out) uint8_t* context_out,
     _Inout_ size_t* context_size_out);
 
+typedef PKTMON_NETEVT_CLIENT_REPORT_PACKET_DROP_OUT netevent_event_t;
+
 static void
-_ebpf_netevent_push_event(_In_ netevent_event_md_t* netevent_event);
+_ebpf_netevent_push_event(_In_ netevent_event_t* netevent_event);
 
 NTSTATUS
 _netevent_ebpf_extension_attach_provider(
@@ -441,8 +444,8 @@ _ebpf_netevent_program_context_create(
     memcpy(&netevent_event_context->netevent_event_md, context_in, sizeof(netevent_event_md_t));
 
     // Copy the event's pointer & size from the caller, to the out context.
-    netevent_event_context->netevent_event_md.event_data_start = (uint8_t*)data_in;
-    netevent_event_context->netevent_event_md.event_data_end = (uint8_t*)data_in + data_size_in;
+    netevent_event_context->netevent_event_md.data_start = (uint8_t*)data_in;
+    netevent_event_context->netevent_event_md.data_end = (uint8_t*)data_in + data_size_in;
     *context = &netevent_event_context->netevent_event_md;
     netevent_event_context = NULL;
     result = EBPF_SUCCESS;
@@ -479,23 +482,22 @@ _ebpf_netevent_program_context_destroy(
         memcpy(netevent_event_context_out, &netevent_event_context->netevent_event_md, sizeof(netevent_event_md_t));
 
         // Zero out the event context info.
-        netevent_event_context_out->event_data_start = 0;
-        netevent_event_context_out->event_data_end = 0;
+        netevent_event_context_out->data_start = 0;
+        netevent_event_context_out->data_end = 0;
         *context_size_out = sizeof(netevent_event_md_t);
     } else {
         *context_size_out = 0;
     }
 
     // Copy the event data to 'data_out'.
-    if (data_out != NULL && *data_size_out >= (size_t)(netevent_event_context->netevent_event_md.event_data_end -
-                                                       netevent_event_context->netevent_event_md.event_data_start)) {
+    if (data_out != NULL && *data_size_out >= (size_t)(netevent_event_context->netevent_event_md.data_end -
+                                                       netevent_event_context->netevent_event_md.data_start)) {
         memcpy(
             data_out,
-            netevent_event_context->netevent_event_md.event_data_start,
-            netevent_event_context->netevent_event_md.event_data_end -
-                netevent_event_context->netevent_event_md.event_data_start);
-        *data_size_out = netevent_event_context->netevent_event_md.event_data_end -
-                         netevent_event_context->netevent_event_md.event_data_start;
+            netevent_event_context->netevent_event_md.data_start,
+            netevent_event_context->netevent_event_md.data_end - netevent_event_context->netevent_event_md.data_start);
+        *data_size_out =
+            netevent_event_context->netevent_event_md.data_end - netevent_event_context->netevent_event_md.data_start;
     } else {
         *data_size_out = 0;
     }
@@ -507,7 +509,7 @@ Exit:
 }
 
 void
-_ebpf_netevent_push_event(_In_ netevent_event_md_t* netevent_event)
+_ebpf_netevent_push_event(_In_ netevent_event_t* netevent_event)
 {
     // Logging may delay the event processing, consider enabling only for debugging or if the calling frequency for a
     // specific use case is low.
@@ -520,18 +522,27 @@ _ebpf_netevent_push_event(_In_ netevent_event_md_t* netevent_event)
     ebpf_result_t result;
     ebpf_extension_hook_client_t* client_context = NULL;
     netevent_event_notify_context_t netevent_event_notify_context = {0};
-    uint64_t event_size = netevent_event->event_data_end - netevent_event->event_data_start;
     bool spin_lock_acquired = false;
+    uint8_t* _event_buffer_data_start = NULL;
+    const char* forbidden_string = "forbidden";
+    size_t forbidden_string_size = strlen(forbidden_string);
+
+    PKTMON_EVT_STREAM_PACKET_HEADER* packetHeader = netevent_event->BufferStart;
+    // Using PacketMetaDataLength instead of sizeof(PKTMON_EVT_STREAM_METADATA) for backward compatibility
+    // since  PKTMON_EVT_STREAM_METADATA can be expanded in the future.
+    uint8_t* data_start = (uint8_t*)(&packetHeader->Metadata);
+    data_start += packetHeader->PacketDescriptor.PacketMetaDataLength;
+    uint64_t payload_size = (netevent_event->BufferEnd - (UCHAR*)netevent_event->BufferStart) + forbidden_string_size;
 
     // Currently, the verifier does not support read-only contexts, so we need to copy the event data, rather than
     // directly passing the existing pointers.
     // Verifier feature proposal: https://github.com/vbpf/ebpf-verifier/issues/639
     KIRQL oldIrql = ExAcquireSpinLockExclusive(&_ebpf_netevent_push_event_lock);
     spin_lock_acquired = true;
-    if (event_size > _event_buffer_size) {
+    if (payload_size > _event_buffer_size) {
         // If the event buffer is too small, attempt to resize it.
         uint8_t* new_event_buffer =
-            (uint8_t*)ExAllocatePoolUninitialized(NonPagedPoolNx, event_size, EBPF_NETEVENT_EXTENSION_POOL_TAG);
+            (uint8_t*)ExAllocatePoolUninitialized(NonPagedPoolNx, payload_size, EBPF_NETEVENT_EXTENSION_POOL_TAG);
         if (new_event_buffer == NULL) {
             EBPF_EXT_LOG_MESSAGE(
                 EBPF_EXT_TRACELOG_LEVEL_ERROR,
@@ -543,11 +554,26 @@ _ebpf_netevent_push_event(_In_ netevent_event_md_t* netevent_event)
             ExFreePool(_event_buffer);
         }
         _event_buffer = new_event_buffer;
-        _event_buffer_size = event_size;
+        _event_buffer_size = payload_size;
     }
-    memcpy(_event_buffer, netevent_event->event_data_start, event_size);
-    netevent_event_notify_context.netevent_event_md.event_data_start = _event_buffer;
-    netevent_event_notify_context.netevent_event_md.event_data_end = _event_buffer + event_size;
+
+    _event_buffer_data_start = _event_buffer + sizeof(PKTMON_EVT_STREAM_PACKET_HEADER);
+
+    // C_ASSERT(sizeof(netevent_event_notify_context.netevent_event_md.header) ==
+    // sizeof(PKTMON_EVT_STREAM_PACKET_HEADER));
+    if (sizeof(PKTMON_EVT_STREAM_PACKET_HEADER) < payload_size) {
+        memcpy(_event_buffer, packetHeader, sizeof(PKTMON_EVT_STREAM_PACKET_HEADER));
+    }
+    memcpy(_event_buffer_data_start, data_start, payload_size - sizeof(PKTMON_EVT_STREAM_PACKET_HEADER));
+
+    memcpy(_event_buffer + payload_size, forbidden_string, forbidden_string_size);
+
+    netevent_event_notify_context.netevent_event_md.data_meta = _event_buffer + payload_size + forbidden_string_size;
+    netevent_event_notify_context.netevent_event_md.data_start = _event_buffer_data_start;
+
+    // memcpy(_event_buffer, data_start, payload_size);
+    // netevent_event_notify_context.netevent_event_md.data_start = _event_buffer;
+    netevent_event_notify_context.netevent_event_md.data_end = _event_buffer + payload_size;
 
     // For each attached client call the netevent hook.
     client_context = ebpf_extension_hook_get_next_attached_client(_ebpf_netevent_event_hook_provider_context, NULL);

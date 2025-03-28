@@ -2,7 +2,10 @@
 // SPDX-License-Identifier: MIT
 
 #define CATCH_CONFIG_MAIN
+// clang-format off
+#include "framework.h"
 #include "..\netevent_sim\netevent_types.h"
+// clang-format on
 #include "catch_wrapper.hpp"
 #include "cxplat_fault_injection.h"
 #include "cxplat_passed_test_log.h"
@@ -43,15 +46,15 @@ _dump_event(uint8_t event_type, const char* event_descr, void* data, size_t size
         size == sizeof(netevent_message_t)) {
 
         // Cast the event and print its details
-        netevent_message_t* demo_event = reinterpret_cast<netevent_message_t*>(data);
-        std::cout << "\rNetwork event [" << demo_event->event_counter << "]: {"
-                  << "src: " << (int)demo_event->source_ip.octet1 << "." << (int)demo_event->source_ip.octet2 << "."
-                  << (int)demo_event->source_ip.octet3 << "." << (int)demo_event->source_ip.octet4 << ":"
-                  << demo_event->source_port << ", "
-                  << "dst: " << (int)demo_event->destination_ip.octet1 << "." << (int)demo_event->destination_ip.octet2
-                  << "." << (int)demo_event->destination_ip.octet3 << "." << (int)demo_event->destination_ip.octet4
-                  << ":" << demo_event->destination_port << ", "
-                  << "reason: " << (int)demo_event->reason;
+        netevent_message_t* test_message = reinterpret_cast<netevent_message_t*>(data);
+        netevent_payload_t* test_payload = static_cast<netevent_payload_t*>(&test_message->payload);
+        std::cout << "\rNetwork event [" << test_payload->event_counter << "]: {"
+                  << "src: " << (int)test_payload->source_ip.octet1 << "." << (int)test_payload->source_ip.octet2 << "."
+                  << (int)test_payload->source_ip.octet3 << "." << (int)test_payload->source_ip.octet4 << ":"
+                  << test_payload->source_port << ", "
+                  << "dst: " << (int)test_payload->destination_ip.octet1 << "."
+                  << (int)test_payload->destination_ip.octet2 << "." << (int)test_payload->destination_ip.octet3 << "."
+                  << (int)test_payload->destination_ip.octet4 << ":" << test_payload->destination_port;
         std::cout << "}" << std::flush;
     } else {
         // Simply dump the event data as hex bytes.
@@ -91,6 +94,19 @@ netevent_monitor_event_callback(void* ctx, void* data, size_t size)
     return 0;
 }
 
+int
+test_event_callback(void* ctx, void* data, size_t size)
+{
+    // Parameter checks.
+    UNREFERENCED_PARAMETER(ctx);
+    if (data == nullptr || size == 0) {
+        return 0;
+    }
+    // Print the data to the console as a string.
+    std::cout << "Data received: " << std::string(reinterpret_cast<const char*>(data), size) << std::endl;
+
+    return 0;
+}
 TEST_CASE("netevent_event_simulation", "[neteventebpfext]")
 {
     // Free the BPF object will take some time to unload from the previous test
@@ -128,6 +144,11 @@ TEST_CASE("netevent_event_simulation", "[neteventebpfext]")
     bpf_map* netevent_events_map = bpf_object__find_map_by_name(object, "netevent_events_map");
     REQUIRE(netevent_events_map != nullptr);
     auto ring = ring_buffer__new(bpf_map__fd(netevent_events_map), netevent_monitor_event_callback, nullptr, nullptr);
+    REQUIRE(ring != nullptr);
+
+    bpf_map* test_events_map = bpf_object__find_map_by_name(object, "test_events_map");
+    REQUIRE(test_events_map != nullptr);
+    auto test_ring = ring_buffer__new(bpf_map__fd(test_events_map), test_event_callback, nullptr, nullptr);
     REQUIRE(ring != nullptr);
 
     // Wait for the number of expected events or the test's max run time.
