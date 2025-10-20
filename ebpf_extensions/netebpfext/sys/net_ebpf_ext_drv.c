@@ -1,4 +1,4 @@
-// Copyright (c) eBPF for Windows contributors
+// Copyright (c) Microsoft Corporation
 // SPDX-License-Identifier: MIT
 
 /**
@@ -7,8 +7,8 @@
  * 2. Registers as an eBPF program information provider and hook provider.
  */
 
+#include "ebpf_ext_version.h"
 #include "ebpf_platform.h"
-#include "ebpf_version.h"
 #include "git_commit_id.h"
 #include "net_ebpf_ext.h"
 
