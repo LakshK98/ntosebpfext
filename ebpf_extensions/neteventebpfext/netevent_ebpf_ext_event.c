@@ -27,6 +27,7 @@ typedef struct _pktmon_evt_stream_packet_header_minimal
 // Global variables.
 //
 #define INIT_EVENT_BUFFER_SIZE 4096
+#define MAX_NETEVENT_EVENT_BUFFER_SIZE (64 * 1024) // 64 KB
 static uint32_t _cpu_count = 0;
 // Define a per-cpu dynamic event buffer for optimizing the event data copy.
 static uint8_t** _event_buffers = NULL;
@@ -519,6 +520,14 @@ _ebpf_netevent_program_context_create(
     if ((header_ptr->type == NETEVENT_EVENT_TYPE_PKTMON_DROP) ||
         (header_ptr->type == NETEVENT_EVENT_TYPE_PKTMON_FLOW)) {
         const size_t header_size = PKTMON_EVENT_HEADER_LENGTH + sizeof(netevent_data_header_t);
+        if (data_size_in < header_size) {
+            EBPF_EXT_LOG_MESSAGE(
+                EBPF_EXT_TRACELOG_LEVEL_ERROR,
+                EBPF_EXT_TRACELOG_KEYWORD_NETEVENT,
+                "data_size_in too small for event header");
+            result = EBPF_INVALID_ARGUMENT;
+            goto Exit;
+        }
         netevent_event_context->netevent_event_md.data_meta = (uint8_t*)data_in;
         netevent_event_context->netevent_event_md.data = (uint8_t*)data_in + header_size;
     } else {
@@ -629,6 +638,11 @@ _ebpf_netevent_push_event(_In_ netevent_event_t* netevent_event)
 
     // Calculate sizes after validating the event data pointers
     payload_size = netevent_event->event_end - netevent_event->event_start;
+    if (payload_size > UINT64_MAX - sizeof(netevent_data_header_t)) {
+        EBPF_EXT_LOG_MESSAGE(
+            EBPF_EXT_TRACELOG_LEVEL_ERROR, EBPF_EXT_TRACELOG_KEYWORD_NETEVENT, "Invalid event: payload_size overflow");
+        goto Exit;
+    }
     total_size = sizeof(netevent_data_header_t) + payload_size;
     data_start = netevent_event->event_start + PKTMON_EVENT_HEADER_LENGTH;
 
@@ -664,6 +678,15 @@ _ebpf_netevent_push_event(_In_ netevent_event_t* netevent_event)
             EBPF_EXT_TRACELOG_LEVEL_ERROR,
             EBPF_EXT_TRACELOG_KEYWORD_NETEVENT,
             "Current cpu number is greater than max cpu count - event lost");
+        goto Exit;
+    }
+
+    // Cap per-CPU event buffer growth to prevent kernel pool exhaustion.
+    if (total_size > MAX_NETEVENT_EVENT_BUFFER_SIZE) {
+        EBPF_EXT_LOG_MESSAGE(
+            EBPF_EXT_TRACELOG_LEVEL_ERROR,
+            EBPF_EXT_TRACELOG_KEYWORD_NETEVENT,
+            "Event exceeds maximum supported size - event lost");
         goto Exit;
     }
 
